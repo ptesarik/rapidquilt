@@ -235,9 +235,14 @@ impl<'arena, 'config> ModifiedFiles<'arena, 'config> {
 
             Entry::Vacant(entry) => {
                 let real_path = config.base_dir.join(filename);
-                match arena.load_file(&real_path) {
-                    Ok(data) => {
-                        let meta = std::fs::metadata(real_path)?;
+                let meta = std::fs::symlink_metadata(&real_path);
+                match meta {
+                    Ok(meta) => {
+                        let data = if meta.is_symlink() {
+                            arena.load_symlink(&real_path)?
+                        } else {
+                            arena.load_file(&real_path)?
+                        };
                         entry.insert(ModifiedFile::new(data, true, Some(meta.permissions())))
                     }
 

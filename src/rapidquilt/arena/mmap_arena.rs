@@ -8,6 +8,7 @@ use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::Mutex;
+use std::mem::transmute;
 
 use super::{Arena, Stats};
 
@@ -18,6 +19,11 @@ struct Mapping {
     size: usize,
 }
 
+enum Content {
+    Mapped(Mapping),
+    Boxed(Box<[u8]>),
+}
+
 /// Utility that reads files and keeps them loaded in immovable place in memory
 /// for its lifetime. So the returned byte slices can be used as long as the
 /// object of this struct is alive.
@@ -26,7 +32,7 @@ struct Mapping {
 /// changes the file, the content of the memory may change or cause crash if
 /// the file truncated.
 pub struct MmapArena<'a> {
-    mappings: Mutex<Vec<Mapping>>,
+    contents: Mutex<Vec<Content>>,
     _phantom: PhantomData<&'a [u8]>,
 }
 
@@ -37,7 +43,7 @@ unsafe impl Sync for MmapArena<'_> {}
 impl MmapArena<'_> {
     pub fn new() -> Self {
         Self {
-            mappings: Mutex::new(Vec::new()),
+            contents: Mutex::new(Vec::new()),
             _phantom: PhantomData,
         }
     }
@@ -72,7 +78,7 @@ impl<'a> Arena for MmapArena<'a> {
             size,
         };
 
-        self.mappings.lock().unwrap().push(mapping); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
+        self.contents.lock().unwrap().push(Content::Mapped(mapping)); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
 
         let slice = unsafe {
             std::slice::from_raw_parts::<'a>(start as *const u8, size)
@@ -81,21 +87,46 @@ impl<'a> Arena for MmapArena<'a> {
         Ok(slice)
     }
 
+    /// Read a symbolic link and return byte slice of its value. The slice is
+    /// valid as long as this object is alive. (Same lifetimes.)
+    fn load_symlink(&self, path: &Path) -> Result<&[u8], io::Error> {
+        let data = path.read_link()?.into_os_string().into_encoded_bytes().into_boxed_slice();
+
+        let slice = unsafe {
+            // We guarantee to the compiler that we will hold the content of the
+            // Box for as long as we are alive. We will place the Box into the
+            // `contents` Vec and we never delete items from there. Reallocating
+            // the `contents` backing storage doesn't affect the content of the
+            // Boxes.
+            transmute::<&[u8], &'a [u8]>(&data)
+        };
+
+        self.contents.lock().unwrap().push(Content::Boxed(data)); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
+
+        Ok(slice)
+    }
+
     /// Get statistics
     fn stats(&self) -> Stats {
-        let mappings = self.mappings.lock().unwrap(); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
+        let contents = self.contents.lock().unwrap(); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
 
         Stats {
-            loaded_files: mappings.len(),
-            total_size: mappings.iter().map(|m| m.size).sum(),
+            loaded_files: contents.len(),
+            total_size: contents.iter().map(|item| match item {
+                Content::Mapped(m) => m.size,
+                Content::Boxed(d) => d.len(),
+            }).sum(),
         }
     }
 }
 
 impl Drop for MmapArena<'_> {
     fn drop(&mut self) {
-        if let Ok(mappings) = self.mappings.lock() {
-            for mapping in mappings.iter() {
+        if let Ok(contents) = self.contents.lock() {
+            for mapping in contents.iter().filter_map(|item| match item {
+                Content::Mapped(m) => Some(m),
+                _ => None,
+            }) {
                 unsafe {
                     libc::munmap(mapping.start, mapping.size);
                 }
@@ -125,4 +156,10 @@ fn test_directory() -> Result<(), io::Error> {
     assert!(matches!(content, Err(error) if error.raw_os_error() == Some(libc::ENODEV)));
 
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn test_symlink() -> Result<(), io::Error> {
+    super::test_symlink(&MmapArena::new())
 }
