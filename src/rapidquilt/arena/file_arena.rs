@@ -57,3 +57,26 @@ impl<'a> Arena for FileArena<'a> {
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn test_empty() {
+    super::test_empty(&FileArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_regular() -> Result<(), io::Error> {
+    super::test_regular(&FileArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_directory() -> Result<(), io::Error> {
+    let work_dir = tempfile::tempdir()?;
+    let arena = FileArena::new();
+    let content = arena.load_file(&work_dir.path());
+    assert!(matches!(content, Err(error) if error.kind() == io::ErrorKind::IsADirectory));
+
+    Ok(())
+}

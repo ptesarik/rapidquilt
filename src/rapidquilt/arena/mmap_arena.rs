@@ -103,3 +103,26 @@ impl Drop for MmapArena<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn test_empty() {
+    super::test_empty(&MmapArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_regular() -> Result<(), io::Error> {
+    super::test_regular(&MmapArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_directory() -> Result<(), io::Error> {
+    let work_dir = tempfile::tempdir()?;
+    let arena = MmapArena::new();
+    let content = arena.load_file(&work_dir.path());
+    assert!(matches!(content, Err(error) if error.raw_os_error() == Some(libc::ENODEV)));
+
+    Ok(())
+}
