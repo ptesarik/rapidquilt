@@ -1,5 +1,5 @@
 diff --git qeth_core_main.c qeth_core_main.c
-index 35d4b398c197..8bd9fd51208c
+index 35d4b398c197..8bd9fd51208c 100644
 --- qeth_core_main.c
 +++ qeth_core_main.c
 @@ -4839,6 +4797,7 @@ static int qeth_init_link_info_oat_cb(struct qeth_card *card,
