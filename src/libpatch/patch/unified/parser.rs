@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::vec::Vec;
@@ -90,6 +91,9 @@ pub enum ParseError {
 
     #[error("Invalid mode: \"{0}\"")]
     BadMode(String),
+
+    #[error("Cannot change file type from 0{0:o} to 0{1:o}")]
+    BadModeChange(u32, u32),
 
     #[error("Invalid escape sequence: \"{0}\"")]
     BadSequence(String),
@@ -2190,6 +2194,15 @@ pub fn parse_patch(bytes: &[u8], strip: usize) -> Result<TextPatch<'_>, ParseErr
             }
         };
 
+	// Complain if file type changes
+	if let (Some(old_permissions), Some(new_permissions)) = (filepatch.old_permissions(), filepatch.new_permissions()) {
+	    let old_mode = old_permissions.mode();
+	    let new_mode = new_permissions.mode();
+	    if (old_mode ^ new_mode) & 0o170000 != 0 {
+		return Err(ParseError::BadModeChange(old_mode, new_mode));
+	    }
+	}
+
         if wants_header {
             // We take header from the first FilePatch and then we don't want any more
             header = filepatch_header;
@@ -2416,6 +2429,28 @@ garbage with no EOL"#;
     let patch = parse_patch(filepatch_txt, 0).unwrap();
     assert!(patch.warnings.iter().fold(false, |found, item|
 				       found || item.contains("ignored hunk")));
+
+    // Attempts to change file type are rejected.
+    let filepatch_txt = br#"garbage1
+diff --git a/file b/file
+old mode 100644
+new mode 120000
+index f525151..97fb028
+--- a/file
++++ b/file
+@@ -1,1 +1,1 @@ place1
+- regular
++ symlink
+\ No newline at end of file
+"#;
+
+    let patch = parse_patch(filepatch_txt, 1);
+    match patch {
+	Err(error) =>
+	    assert_eq!(error, ParseError::BadModeChange(0o100644, 0o120000)),
+        _ =>
+            panic!("Unexpected return: {:?}", patch)
+    }
 }
 
 #[cfg(test)]
