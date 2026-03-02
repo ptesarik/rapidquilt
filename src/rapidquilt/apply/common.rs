@@ -113,26 +113,51 @@ where P: AsRef<Path>,
 fn save_file(file: &ModifiedFile, path: &Path)
              -> Result<(), io::Error>
 {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     // NOTE(unwrap): Path was constructed by joining the target file name.
     let path_parent = path.parent().unwrap();
     let mut prefix = path.file_name().unwrap().to_os_string();
     prefix.push(".");
 
-    let mut tmp_path = tempfile::Builder::new()
-        .prefix(&prefix)
-        .make_in(path_parent, |fp| {
-            fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(fp)
-        })?;
-    let output = tmp_path.as_file_mut();
-    file.write_to(output)?;
+    let tmp_path = match &file.permissions {
+        #[cfg(unix)]
+        Some(permissions) if permissions.mode() & 0o170000 == 0o120000 => {
+            // The current implementation on Unix allows any binary content,
+            // as long as it does not contain any NUL.
+            let content = unsafe {
+                std::ffi::OsString::from_encoded_bytes_unchecked(file.content.concat())
+            };
+            tempfile::Builder::new()
+                .prefix(&prefix)
+                .make_in(path_parent, |fp| {
+                    use std::os::unix::fs::symlink;
+                    symlink(&content, fp)
+                })?
+                .into_temp_path()
+        }
 
-    // If any patch set non-default permission, set them now
-    if let Some(permissions) = &file.permissions {
-	output.set_permissions(permissions.clone())?;
-    }
+        _ => {
+            let mut named_tmp = tempfile::Builder::new()
+                .prefix(&prefix)
+                .make_in(path_parent, |fp| {
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(fp)
+                })?;
+            let output = named_tmp.as_file_mut();
+            file.write_to(output)?;
+
+            // If any patch set non-default permission, set them now
+            if let Some(permissions) = &file.permissions {
+	        output.set_permissions(permissions.clone())?;
+            }
+
+            named_tmp.into_temp_path()
+        }
+    };
 
     fs::rename(tmp_path, path)
 }
