@@ -498,6 +498,21 @@ impl<'arena, 'config> AppliedState<'arena, 'config> {
         let file = self.modified_files.get_or_load(&target_filename, arena)
             .with_context(|| ApplyError::LoadFileToPatch { filename: target_filename.to_path_buf() })?;
 
+        // Verify correct file type
+        #[cfg(unix)]
+        if let Some(permissions) = &file.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let expect_mode = file_patch.old_permissions().map(|p| p.mode()).unwrap_or(0o100000);
+            if (expect_mode ^ permissions.mode()) & 0o170000 != 0 {
+                println!("Patch {} expects {} to have file type 0{:o}, but it has 0{:o}.",
+                         patch.filename.display(),
+                         target_filename.display(),
+                         permissions.mode() & 0o170000,
+                         expect_mode & 0o170000);
+                return Ok(false);
+            }
+        }
+
         // If the patch renames the file. do it now...
         let (file, final_filename) = if file_patch.is_rename() {
             let new_filename = file_patch.new_filename().unwrap(); // NOTE(unwrap): It must be there for renaming patches.
