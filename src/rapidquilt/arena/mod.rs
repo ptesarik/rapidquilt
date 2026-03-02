@@ -18,6 +18,10 @@ pub trait Arena: Sync {
     /// is valid as long as this object is alive. (Same lifetimes.)
     fn load_file(&self, path: &Path) -> Result<&[u8], io::Error>;
 
+    /// Read a symbolic link and return byte slice of its value. The slice is
+    /// valid as long as this object is alive. (Same lifetimes.)
+    fn load_symlink(&self, path: &Path) -> Result<&[u8], io::Error>;
+
     /// Get statistics
     fn stats(&self) -> Stats;
 }
@@ -31,4 +35,99 @@ impl fmt::Display for Stats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Arena Statistics (loaded files: {}, total size: {} B)", self.loaded_files, self.total_size)
     }
+}
+
+#[cfg(test)]
+use std::fs::File;
+#[cfg(test)]
+use std::io::Write;
+#[cfg(test)]
+use std::ffi::OsStr;
+
+#[cfg(test)]
+fn test_empty(arena: &dyn Arena) {
+    let stats = arena.stats();
+    assert_eq!(stats.loaded_files, 0);
+    assert_eq!(stats.total_size, 0);
+}
+
+#[cfg(test)]
+fn test_regular(arena: &dyn Arena) -> Result<(), io::Error> {
+    let work_dir = tempfile::tempdir()?;
+
+    // A normal text file
+    let path = work_dir.path().join("regular");
+    let write_regular = b"Some content
+Second line
+Third line
+";
+    let mut file = File::create(&path)?;
+    file.write_all(write_regular)?;
+
+    let read_regular = arena.load_file(&path)?;
+    assert_eq!(write_regular, read_regular);
+
+    let stats = arena.stats();
+    assert_eq!(stats.loaded_files, 1);
+    assert_eq!(stats.total_size, write_regular.len());
+
+    // A binary file (cannot be decoded as UTF-8)
+    let path = work_dir.path().join("non-utf8");
+    let write_non_utf8 = b"Some non-UTF8 binary content
+Invalid byte 0xc0: \xc0
+Invalid byte 0xff: \xff
+Invalid sequence 0xc0 0x10: \xc0\x10
+I could add more, but I only care if non-UTF-8 content can be loaded.
+";
+    let mut file = File::create(&path)?;
+    file.write_all(write_non_utf8)?;
+
+    let read_non_utf8 = arena.load_file(&path)?;
+    assert_eq!(write_non_utf8, read_non_utf8);
+
+    let stats = arena.stats();
+    assert_eq!(stats.loaded_files, 2);
+    assert_eq!(stats.total_size, write_regular.len() + write_non_utf8.len());
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[cfg(test)]
+fn test_symlink(arena: &dyn Arena) -> Result<(), io::Error> {
+    use std::os::unix::fs::symlink;
+
+    let work_dir = tempfile::tempdir()?;
+
+    // Normal symlink
+    let path = work_dir.path().join("symlink");
+    let write_symlink = "good 😇 target";
+    symlink(write_symlink, &path)?;
+    let read_symlink = arena.load_symlink(&path)?;
+    assert_eq!(write_symlink.as_bytes(), read_symlink);
+
+    let stats = arena.stats();
+    assert_eq!(stats.loaded_files, 1);
+    assert_eq!(stats.total_size, write_symlink.len());
+
+    // Symlink from hell
+    let path = work_dir.path().join("symlink2");
+    let write_evil_symlink = b"evil target
+with embedded newlines
+and non-utf8 \xc1\xfe\xc0\x20 binary content
+";
+    unsafe {
+	// The current implementation on Unix allows any binary content,
+	// as long as it does not contain any NUL.
+        let target = OsStr::from_encoded_bytes_unchecked(write_evil_symlink);
+        symlink(target, &path)?;
+    }
+    let read_evil_symlink = arena.load_symlink(&path)?;
+    assert_eq!(write_evil_symlink, read_evil_symlink);
+
+    let stats = arena.stats();
+    assert_eq!(stats.loaded_files, 2);
+    assert_eq!(stats.total_size, write_symlink.len() + write_evil_symlink.len());
+
+    Ok(())
 }

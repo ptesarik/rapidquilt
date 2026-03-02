@@ -1,0 +1,8 @@
+Try to patch a symlink without specifying file mode.
+--- a/symlink
++++ b/symlink
+@@ -1,1 +1,1 @@
+-target
+\ No newline at end of file
++another_target
+\ No newline at end of file

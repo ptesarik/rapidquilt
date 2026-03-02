@@ -1,0 +1,10 @@
+Change symlink target
+diff --git a/symlink1 b/symlink1
+index 12a8d8a..3b7781e 120000
+--- a/symlink1
++++ b/symlink1
+@@ -1 +1 @@
+-target1
+\ No newline at end of file
++target2
+\ No newline at end of file

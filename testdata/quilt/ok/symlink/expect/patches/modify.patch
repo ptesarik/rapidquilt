@@ -1,0 +1,9 @@
+diff --git a/link b/link
+index 1de5659..457245e 120000
+--- a/link
++++ b/link
+@@ -1 +1 @@
+-target
+\ No newline at end of file
++new_target
+\ No newline at end of file

@@ -36,7 +36,7 @@ Acked-by: Hannes Reinecke <hare@suse.com>
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
-index 5e07d5628864..d31e298669a9
+index 5e07d5628864..d31e298669a9 100644
 --- a/drivers/nvme/host/pci.c
 +++ b/drivers/nvme/host/pci.c
 @@ -3153,7 +3153,8 @@ static const struct pci_device_id nvme_id_table[] = {

@@ -135,21 +135,20 @@ fn write_file_patch_header_to<'a, W: Write>(filepatch: &FilePatch<'a, &'a [u8]>,
             if let Some(permissions) = filepatch.old_permissions() {
                 if filepatch.kind() == FilePatchKind::Delete {
                     writeln!(writer, "delete file mode {:o}", permissions.mode())?;
-                } else {
+                } else if let Some(new_permissions) = filepatch.new_permissions() {
                     writeln!(writer, "old mode {:o}", permissions.mode())?;
+                    writeln!(writer, "new mode {:o}", new_permissions.mode())?;
                 }
-            }
-
-            if let Some(permissions) = filepatch.new_permissions() {
-                if filepatch.kind() == FilePatchKind::Delete {
-                    writeln!(writer, "new file mode {:o}", permissions.mode())?;
-                } else {
-                    writeln!(writer, "new mode {:o}", permissions.mode())?;
-                }
+            } else if let Some(permissions) = filepatch.new_permissions() {
+                writeln!(writer, "new file mode {:o}", permissions.mode())?;
             }
 
             if let (Some(old_hash), Some(new_hash)) = (filepatch.old_hash(), filepatch.new_hash()) {
-                writeln!(writer, "index {}..{}", String::from_utf8_lossy(old_hash), String::from_utf8_lossy(new_hash))?;
+                if let (Some(permissions), None) = (filepatch.old_permissions(), filepatch.new_permissions()) {
+                    writeln!(writer, "index {}..{} {:o}", String::from_utf8_lossy(old_hash), String::from_utf8_lossy(new_hash), permissions.mode())?;
+                } else {
+                    writeln!(writer, "index {}..{}", String::from_utf8_lossy(old_hash), String::from_utf8_lossy(new_hash))?;
+                }
             }
         }
         #[cfg(not(unix))]

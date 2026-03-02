@@ -47,6 +47,21 @@ impl<'a> Arena for FileArena<'a> {
         Ok(slice)
     }
 
+    /// Read a symbolic link and return byte slice of its value. The slice is
+    /// valid as long as this object is alive. (Same lifetimes.)
+    fn load_symlink(&self, path: &Path) -> Result<&[u8], io::Error> {
+        let data = path.read_link()?.into_os_string().into_encoded_bytes().into_boxed_slice();
+
+        let slice = unsafe {
+            // Same explanation as in load_file().
+            transmute::<&[u8], &'a [u8]>(&data)
+        };
+
+        self.files.lock().unwrap().push(data); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
+
+        Ok(slice)
+    }
+
     /// Get statistics
     fn stats(&self) -> Stats {
         let files = self.files.lock().unwrap(); // NOTE(unwrap): If the lock is poisoned, some other thread panicked. We may as well.
@@ -56,4 +71,34 @@ impl<'a> Arena for FileArena<'a> {
             total_size: files.iter().map(|f| f.len()).sum(),
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn test_empty() {
+    super::test_empty(&FileArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_regular() -> Result<(), io::Error> {
+    super::test_regular(&FileArena::new())
+}
+
+#[cfg(test)]
+#[test]
+fn test_directory() -> Result<(), io::Error> {
+    let work_dir = tempfile::tempdir()?;
+    let arena = FileArena::new();
+    let content = arena.load_file(&work_dir.path());
+    assert!(matches!(content, Err(error) if error.kind() == io::ErrorKind::IsADirectory));
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[cfg(test)]
+#[test]
+fn test_symlink() -> Result<(), io::Error> {
+    super::test_symlink(&FileArena::new())
 }

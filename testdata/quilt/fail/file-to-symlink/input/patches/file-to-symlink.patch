@@ -1,0 +1,10 @@
+Pretend the file was already a symlink.
+diff --git a/file b/file
+index 95bc8d6..97fb028 120000
+--- a/file
++++ b/file
+@@ -1 +1 @@
+-regular file
+\ No newline at end of file
++symlink
+\ No newline at end of file

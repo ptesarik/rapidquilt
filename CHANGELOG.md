@@ -1,5 +1,11 @@
 # Unreleased changes
 
+# Version 0.7.0
+
+* Minimum required Rust version is 1.74
+* Implement symlink patches.
+* Improve writing patched files.
+
 # Version 0.6.8
 
 * Print a warning when suspicious patch content is found.

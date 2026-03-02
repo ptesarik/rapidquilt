@@ -109,6 +109,59 @@ where P: AsRef<Path>,
     Ok(())
 }
 
+// Save a single ModifiedFile content to a given path
+fn save_file(file: &ModifiedFile, path: &Path)
+             -> Result<(), io::Error>
+{
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    // NOTE(unwrap): Path was constructed by joining the target file name.
+    let path_parent = path.parent().unwrap();
+    let mut prefix = path.file_name().unwrap().to_os_string();
+    prefix.push(".");
+
+    let tmp_path = match &file.permissions {
+        #[cfg(unix)]
+        Some(permissions) if permissions.mode() & 0o170000 == 0o120000 => {
+            // The current implementation on Unix allows any binary content,
+            // as long as it does not contain any NUL.
+            let content = unsafe {
+                std::ffi::OsString::from_encoded_bytes_unchecked(file.content.concat())
+            };
+            tempfile::Builder::new()
+                .prefix(&prefix)
+                .make_in(path_parent, |fp| {
+                    use std::os::unix::fs::symlink;
+                    symlink(&content, fp)
+                })?
+                .into_temp_path()
+        }
+
+        _ => {
+            let mut named_tmp = tempfile::Builder::new()
+                .prefix(&prefix)
+                .make_in(path_parent, |fp| {
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(fp)
+                })?;
+            let output = named_tmp.as_file_mut();
+            file.write_to(output)?;
+
+            // If any patch set non-default permission, set them now
+            if let Some(permissions) = &file.permissions {
+	        output.set_permissions(permissions.clone())?;
+            }
+
+            named_tmp.into_temp_path()
+        }
+    };
+
+    fs::rename(tmp_path, path)
+}
+
 /// Save the `file` to disk. It also takes care of creating/deleting the file
 /// and containing directories.
 pub fn save_modified_file<'arena, H: BuildHasher>(
@@ -166,14 +219,7 @@ pub fn save_modified_file<'arena, H: BuildHasher>(
                 fs::create_dir_all(parent)?;
             }
         }
-        let mut output = File::create(file_path)?;
-
-        // If any patch set non-default permission, set them now
-        if let Some(ref permissions) = file.permissions {
-            output.set_permissions(permissions.clone())?;
-        }
-
-        file.write_to(&mut output)?;
+        save_file(file, &file_path)?;
     }
 
     Ok(())
@@ -235,9 +281,14 @@ impl<'arena, 'config> ModifiedFiles<'arena, 'config> {
 
             Entry::Vacant(entry) => {
                 let real_path = config.base_dir.join(filename);
-                match arena.load_file(&real_path) {
-                    Ok(data) => {
-                        let meta = std::fs::metadata(real_path)?;
+                let meta = std::fs::symlink_metadata(&real_path);
+                match meta {
+                    Ok(meta) => {
+                        let data = if meta.is_symlink() {
+                            arena.load_symlink(&real_path)?
+                        } else {
+                            arena.load_file(&real_path)?
+                        };
                         entry.insert(ModifiedFile::new(data, true, Some(meta.permissions())))
                     }
 
@@ -284,24 +335,6 @@ impl<'arena, 'config> ModifiedFiles<'arena, 'config> {
     }
 }
 
-/// Create a file with given permissions, removing existing file if necessary
-pub fn create_file(filename: &Path, permissions: &Option<fs::Permissions>)
-		   -> Result<File, io::Error>
-{
-    let f = match File::create(filename) {
-	Ok(file) => file,
-	Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-	    fs::remove_file(filename)?;
-	    File::create(filename)?
-	}
-        Err(error) => return Err(error),
-    };
-    if let Some(ref permissions) = permissions {
-	f.set_permissions(permissions.clone())?;
-    }
-    Ok(f)
-}
-
 /// Write the `original_file` as a quilt backup file.
 pub fn save_backup_file(config: &ApplyConfig,
                         patch_filename: &Path,
@@ -321,8 +354,7 @@ pub fn save_backup_file(config: &ApplyConfig,
     // NOTE(unwrap): We know that there is a parent; we built it ourselves.
     let path_parent = real_path.parent().unwrap();
     fs::create_dir_all(path_parent)
-        .and_then(|_| create_file(&real_path, &original_file.permissions))
-        .and_then(|mut f| original_file.write_to(&mut f))
+        .and_then(|_| save_file(original_file, &real_path))
         .with_context(|| ApplyError::SaveQuiltBackupFile { filename: path })?;
 
     Ok(())
@@ -465,6 +497,21 @@ impl<'arena, 'config> AppliedState<'arena, 'config> {
         let target_filename = choose_filename_to_patch(config, file_patch.old_filename(), file_patch.new_filename(), &self.modified_files).clone();
         let file = self.modified_files.get_or_load(&target_filename, arena)
             .with_context(|| ApplyError::LoadFileToPatch { filename: target_filename.to_path_buf() })?;
+
+        // Verify correct file type
+        #[cfg(unix)]
+        if let Some(permissions) = &file.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let expect_mode = file_patch.old_permissions().map(|p| p.mode()).unwrap_or(0o100000);
+            if (expect_mode ^ permissions.mode()) & 0o170000 != 0 {
+                println!("Patch {} expects {} to have file type 0{:o}, but it has 0{:o}.",
+                         patch.filename.display(),
+                         target_filename.display(),
+                         permissions.mode() & 0o170000,
+                         expect_mode & 0o170000);
+                return Ok(false);
+            }
+        }
 
         // If the patch renames the file. do it now...
         let (file, final_filename) = if file_patch.is_rename() {

@@ -4,7 +4,7 @@
 https://travis-ci.org/openSUSE/rapidquilt)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](
 https://github.com/openSUSE/rapidquilt)
-[![Rust 1.31+](https://img.shields.io/badge/rust-1.31+-lightgray.svg)](
+[![Rust 1.74+](https://img.shields.io/badge/rust-1.74+-lightgray.svg)](
 https://www.rust-lang.org)
 
 This is very specialized reimplementation of quilt & patch in one. It supports
