@@ -974,9 +974,12 @@ impl<'a> InputParser<'a> {
                     metadata.old_filename = Some(filename);
                 }
 
-                GitMetadata(Index(old_hash, new_hash, _)) => {
+                GitMetadata(Index(old_hash, new_hash, opt_mode)) => {
                     metadata.old_hash = Some(old_hash);
                     metadata.new_hash = Some(new_hash);
+                    if let Some(mode) = opt_mode {
+                        metadata.old_permissions = permissions_from_mode(mode);
+                    }
                 }
 
                 GitMetadata(RenameFrom) => {
@@ -2069,6 +2072,31 @@ fn test_parse_filepatch_unix() {
         let mut parser = InputParser::new(bytes);
         parser.take_filepatch(want_header).map(|result| (result.0, result.1, parser.warnings))
     }
+
+    // Symlink filepatch
+    let filepatch_txt = br#"change symlink target
+garbage
+diff --git a/symlink1 b/symlink1
+index 12a8d8a..3b7781e 120000
+--- a/symlink1
++++ b/symlink1
+@@ -1 +1 @@ place2
+-target1
+\ No newline at end of file
++target2
+\ No newline at end of file
+"#;
+
+    let (_header, file_patch, warnings) = parse_filepatch(filepatch_txt, false).unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(file_patch.kind(), FilePatchKind::Modify);
+    assert_eq!(file_patch.old_filename(), Some(&Cow::Owned(PathBuf::from("a/symlink1"))));
+    assert_eq!(file_patch.new_filename(), Some(&Cow::Owned(PathBuf::from("b/symlink1"))));
+    assert_eq!(file_patch.old_permissions(), Some(&Permissions::from_mode(0o120000)));
+    assert_eq!(file_patch.new_permissions(), None);
+    assert_eq!(file_patch.hunks.len(), 1);
+    assert_eq!(file_patch.hunks[0].remove.content[0], s!(b"target1"));
+    assert_eq!(file_patch.hunks[0].add.content[0], s!(b"target2"));
 
     // Mode changing filepatch
     let filepatch_txt = br#"garbage1
