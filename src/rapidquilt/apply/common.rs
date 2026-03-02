@@ -113,21 +113,28 @@ where P: AsRef<Path>,
 fn save_file(file: &ModifiedFile, path: &Path)
              -> Result<(), io::Error>
 {
-    let mut output = match File::create(path) {
-	Ok(file) => file,
-	Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-	    fs::remove_file(path)?;
-	    File::create(path)?
-	}
-        Err(error) => return Err(error),
-    };
+    // NOTE(unwrap): Path was constructed by joining the target file name.
+    let path_parent = path.parent().unwrap();
+    let mut prefix = path.file_name().unwrap().to_os_string();
+    prefix.push(".");
+
+    let mut tmp_path = tempfile::Builder::new()
+        .prefix(&prefix)
+        .make_in(path_parent, |fp| {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(fp)
+        })?;
+    let output = tmp_path.as_file_mut();
+    file.write_to(output)?;
 
     // If any patch set non-default permission, set them now
     if let Some(permissions) = &file.permissions {
 	output.set_permissions(permissions.clone())?;
     }
 
-    file.write_to(&mut output)
+    fs::rename(tmp_path, path)
 }
 
 /// Save the `file` to disk. It also takes care of creating/deleting the file
