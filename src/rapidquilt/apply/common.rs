@@ -109,6 +109,27 @@ where P: AsRef<Path>,
     Ok(())
 }
 
+// Save a single ModifiedFile content to a given path
+fn save_file(file: &ModifiedFile, path: &Path)
+             -> Result<(), io::Error>
+{
+    let mut output = match File::create(path) {
+	Ok(file) => file,
+	Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+	    fs::remove_file(path)?;
+	    File::create(path)?
+	}
+        Err(error) => return Err(error),
+    };
+
+    // If any patch set non-default permission, set them now
+    if let Some(permissions) = &file.permissions {
+	output.set_permissions(permissions.clone())?;
+    }
+
+    file.write_to(&mut output)
+}
+
 /// Save the `file` to disk. It also takes care of creating/deleting the file
 /// and containing directories.
 pub fn save_modified_file<'arena, H: BuildHasher>(
@@ -166,14 +187,7 @@ pub fn save_modified_file<'arena, H: BuildHasher>(
                 fs::create_dir_all(parent)?;
             }
         }
-        let mut output = File::create(file_path)?;
-
-        // If any patch set non-default permission, set them now
-        if let Some(ref permissions) = file.permissions {
-            output.set_permissions(permissions.clone())?;
-        }
-
-        file.write_to(&mut output)?;
+        save_file(file, &file_path)?;
     }
 
     Ok(())
@@ -289,24 +303,6 @@ impl<'arena, 'config> ModifiedFiles<'arena, 'config> {
     }
 }
 
-/// Create a file with given permissions, removing existing file if necessary
-pub fn create_file(filename: &Path, permissions: &Option<fs::Permissions>)
-		   -> Result<File, io::Error>
-{
-    let f = match File::create(filename) {
-	Ok(file) => file,
-	Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-	    fs::remove_file(filename)?;
-	    File::create(filename)?
-	}
-        Err(error) => return Err(error),
-    };
-    if let Some(ref permissions) = permissions {
-	f.set_permissions(permissions.clone())?;
-    }
-    Ok(f)
-}
-
 /// Write the `original_file` as a quilt backup file.
 pub fn save_backup_file(config: &ApplyConfig,
                         patch_filename: &Path,
@@ -326,8 +322,7 @@ pub fn save_backup_file(config: &ApplyConfig,
     // NOTE(unwrap): We know that there is a parent; we built it ourselves.
     let path_parent = real_path.parent().unwrap();
     fs::create_dir_all(path_parent)
-        .and_then(|_| create_file(&real_path, &original_file.permissions))
-        .and_then(|mut f| original_file.write_to(&mut f))
+        .and_then(|_| save_file(original_file, &real_path))
         .with_context(|| ApplyError::SaveQuiltBackupFile { filename: path })?;
 
     Ok(())
