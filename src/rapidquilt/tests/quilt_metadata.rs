@@ -7,7 +7,6 @@ use std::path::Path;
 use std::io::{Read, ErrorKind};
 use anyhow::{anyhow, Context, Result};
 
-#[cfg(test)]
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     for entry in fs::read_dir(from).context(format!("Copying {:?}", from))? {
         let entry = entry?;
@@ -40,7 +39,6 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
 fn compare_tree(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(src).context(format!("Reading {:?}", src))? {
         let entry = entry?;
@@ -95,7 +93,6 @@ fn compare_tree(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
 fn check_extra_files(src: &Path, dst: &Path) -> Result<()> {
     let mut errors = Vec::<String>::new();
     for entry in fs::read_dir(dst).context(format!("Reading {:?}", dst))? {
@@ -114,7 +111,6 @@ fn check_extra_files(src: &Path, dst: &Path) -> Result<()> {
     }
 }
 
-#[cfg(test)]
 fn push_all(path: &Path, num_threads: usize, expect: bool) -> Result<()> {
     eprintln!("Push all patches in {}", path.display());
 
@@ -146,7 +142,6 @@ fn push_all(path: &Path, num_threads: usize, expect: bool) -> Result<()> {
     }
 }
 
-#[cfg(test)]
 fn check_series(path: &str, num_threads: usize, expect: bool) -> Result<()> {
     let dir = fs::read_dir(path);
     match dir {
@@ -167,28 +162,23 @@ fn check_series(path: &str, num_threads: usize, expect: bool) -> Result<()> {
     }
 }
 
-#[cfg(test)]
 #[test]
 fn ok_series_sequential() -> Result<()> {
     check_series("testdata/quilt/ok", 1, true)
 }
 
-#[cfg(test)]
 #[test]
 fn fail_series_sequential() -> Result<()> {
     check_series("testdata/quilt/fail", 1, false)
 }
 
-#[cfg(test)]
 const NUM_THREADS: usize = 2;
 
-#[cfg(test)]
 #[test]
 fn ok_series_parallel() -> Result<()> {
     check_series("testdata/quilt/ok", NUM_THREADS, true)
 }
 
-#[cfg(test)]
 #[test]
 fn fail_series_parallel() -> Result<()> {
     check_series("testdata/quilt/fail", NUM_THREADS, false)
