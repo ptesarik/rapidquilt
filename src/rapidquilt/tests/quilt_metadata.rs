@@ -4,8 +4,9 @@ use std::fs;
 
 use std::ffi::OsStr;
 use std::path::Path;
-use std::io::{Read, ErrorKind};
+use std::io::Read;
 use anyhow::{anyhow, Context, Result};
+use paste::paste;
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     for entry in fs::read_dir(from).context(format!("Copying {:?}", from))? {
@@ -142,44 +143,58 @@ fn push_all(path: &Path, num_threads: usize, expect: bool) -> Result<()> {
     }
 }
 
-fn check_series(path: &str, num_threads: usize, expect: bool) -> Result<()> {
-    let dir = fs::read_dir(path);
-    match dir {
-        Ok(dir) => {
-            for entry in dir {
-                let entry = entry?;
-                if let Err(err) = push_all(&entry.path(), num_threads, expect) {
-                    for fail in err.chain() {
-                        eprintln!("{}", fail);
-                    }
-                    panic!("Push all failed for {:?}", entry.file_name());
-                }
-            }
-            Ok(())
-        },
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
+const BASE_PATH: &str = "testdata/quilt";
+const NUM_THREADS: usize = 2;
+
+macro_rules! series_path {
+    ( $expect:ident, $name:ident ) => {
+	Path::new(BASE_PATH)
+	    .join(stringify!($expect))
+	    .join(stringify!($name).replace("_", "-"))
+    };
+}
+
+macro_rules! parallel_threads {
+    ( sequential ) => { 1 };
+    ( parallel ) => { NUM_THREADS };
+}
+
+macro_rules! expect_bool {
+    ( ok ) => { true };
+    ( fail) => { false };
+}
+
+macro_rules! make_test {
+    ( $expect:ident, $name:ident, $parallel:ident ) => {
+	paste!{
+	    #[test]
+	    fn [< $expect _ $name _ $parallel >]() -> Result<()> {
+		push_all(&series_path!($expect, $name),
+			 parallel_threads!($parallel),
+			 expect_bool!($expect))
+	    }
+	}
     }
 }
 
-#[test]
-fn ok_series_sequential() -> Result<()> {
-    check_series("testdata/quilt/ok", 1, true)
+macro_rules! check_series {
+    ( $expect:ident, $name:ident ) => {
+	make_test!{$expect, $name, sequential}
+	make_test!{$expect, $name, parallel}
+    }
 }
 
-#[test]
-fn fail_series_sequential() -> Result<()> {
-    check_series("testdata/quilt/fail", 1, false)
-}
+check_series!(ok, basic);
+check_series!(ok, cleandir);
+check_series!(ok, create);
+check_series!(ok, double);
+check_series!(ok, double_readonly);
+check_series!(ok, perms);
+check_series!(ok, symlink);
+check_series!(ok, zerolen);
 
-const NUM_THREADS: usize = 2;
-
-#[test]
-fn ok_series_parallel() -> Result<()> {
-    check_series("testdata/quilt/ok", NUM_THREADS, true)
-}
-
-#[test]
-fn fail_series_parallel() -> Result<()> {
-    check_series("testdata/quilt/fail", NUM_THREADS, false)
-}
+check_series!(fail, file_to_symlink);
+check_series!(fail, mismatch);
+check_series!(fail, overlap_rollback);
+check_series!(fail, restore_truncated);
+check_series!(fail, symlink_nomode);
